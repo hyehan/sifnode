@@ -375,7 +375,8 @@ class Ebrelayer:
             (["--home", home] if home else []) + \
             (["--keyring-dir", keyring_dir] if keyring_dir else []) + \
             (["--symbol-translator-file", symbol_translator_file] if symbol_translator_file else []) + \
-            (["--log_format", log_format] if log_format else [])
+            (["--log_format", log_format] if log_format else []) + \
+            (["--broadcast-mode", "sync"])
         return command.buildcmd(args, env=env, cwd=cwd)
 
     # Legacy stuff - pre-peggy2
