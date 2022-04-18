@@ -79,26 +79,17 @@ func InitRelayConfig(
 	return client, transactOptsAuth, target, nil
 }
 
-// RelayBatchProphecyCompletedToEthereum send the prophecy aggregation to CosmosBridge contract on the Ethereum network
-func RelayBatchProphecyCompletedToEthereum(
-	batchProphecyInfo []*oracletypes.ProphecyInfo,
-	sugaredLogger *zap.SugaredLogger,
-	client *ethclient.Client,
-	auth *bind.TransactOpts,
-	cosmosBridgeInstance *cosmosbridge.CosmosBridge,
-) error {
+type BatchUnit struct {
+	batchClaimData     []cosmosbridge.CosmosBridgeClaimData
+	batchSignatureData [][]cosmosbridge.CosmosBridgeSignatureData
+	batchID            [][32]byte
+}
 
-	if len(batchProphecyInfo) == 0 {
-		return nil
-	}
-
+func buildBatchClaim(batchProphecyInfo []*oracletypes.ProphecyInfo) BatchUnit {
 	batchLen := len(batchProphecyInfo)
 	batchClaimData := make([]cosmosbridge.CosmosBridgeClaimData, batchLen)
 	batchSignatureData := make([][]cosmosbridge.CosmosBridgeSignatureData, batchLen)
 	batchID := make([][32]byte, batchLen)
-
-	// reset the gas limit according to length of batchProphecyInfo
-	auth.GasLimit = auth.GasLimit * uint64(batchLen)
 
 	for index, prophecyInfo := range batchProphecyInfo {
 
@@ -143,22 +134,44 @@ func RelayBatchProphecyCompletedToEthereum(
 		batchID[index] = id
 	}
 
+	return BatchUnit{
+		batchClaimData:     batchClaimData,
+		batchSignatureData: batchSignatureData,
+		batchID:            batchID,
+	}
+}
+
+// RelayBatchProphecyCompletedToEthereum send the prophecy aggregation to CosmosBridge contract on the Ethereum network
+func RelayBatchProphecyCompletedToEthereum(
+	batchProphecyInfo []*oracletypes.ProphecyInfo,
+	sugaredLogger *zap.SugaredLogger,
+	client *ethclient.Client,
+	auth *bind.TransactOpts,
+	cosmosBridgeInstance *cosmosbridge.CosmosBridge,
+) error {
+
+	if len(batchProphecyInfo) == 0 {
+		return nil
+	}
+
+	// reset the gas limit according to length of batchProphecyInfo
+	auth.GasLimit = auth.GasLimit * uint64(len(batchProphecyInfo))
+
+	batch := buildBatchClaim(batchProphecyInfo)
+
 	tx, err := cosmosBridgeInstance.BatchSubmitProphecyClaimAggregatedSigs(
 		auth,
-		batchID,
-		batchClaimData,
-		batchSignatureData,
+		batch.batchID,
+		batch.batchClaimData,
+		batch.batchSignatureData,
 	)
-
-	// sleep 2 seconds to wait for tx to go through before querying.
-	sleepThread(2)
 
 	if err != nil {
 		sugaredLogger.Errorw(
 			"cosmosBridgeInstance.BatchSubmitProphecyClaimAggregatedSigs",
-			"batchID", batchID,
-			"batchClaimData", batchClaimData,
-			"batchSignatureData", batchSignatureData,
+			"batchID", batch.batchID,
+			"batchClaimData", batch.batchClaimData,
+			"batchSignatureData", batch.batchSignatureData,
 			errorMessageKey, err,
 		)
 		return err
@@ -172,6 +185,9 @@ func RelayBatchProphecyCompletedToEthereum(
 
 	// if there is an error getting the tx, or if the tx fails, retry 60 times
 	for i < maxRetries {
+		// sleep 2 seconds to wait for tx to go through before querying.
+		sleepThread(2)
+
 		// Get the transaction receipt
 		receipt, err = client.TransactionReceipt(context.Background(), tx.Hash())
 
